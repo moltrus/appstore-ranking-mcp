@@ -1,0 +1,20 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "appstore-ranking-mcp"
+version = "0.1.0"
+description = "MCP server for Apple App Store ranking monitor"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "fastmcp>=3.2.3",
+]
+
+[project.scripts]
+appstore-ranking-mcp = "appstore_ranking_mcp.server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/appstore_ranking_mcp"]
