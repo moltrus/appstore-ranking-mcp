@@ -1,15 +1,62 @@
 import json
+import logging
 import os
 from datetime import datetime
 from collections import defaultdict
 from typing import Any, Dict
 from email.utils import parsedate_to_datetime
 from mcp.server.fastmcp import FastMCP
+from dotenv import load_dotenv
+from toon import encode as toon_encode
+
+load_dotenv()
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger(__name__)
 
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
 STORAGE_DIR = os.path.join(PROJECT_ROOT, "data", "app_data_historical")
+
+RESPONSE_FORMAT = os.getenv("RESPONSE_FORMAT", "json").lower()
+if RESPONSE_FORMAT not in ("json", "toon"):
+    RESPONSE_FORMAT = "json"
+
+# ---------------------------------------------------------------------------
+# Response formatting utilities
+# ---------------------------------------------------------------------------
+
+def _format_response(data: Any) -> Any:
+    """
+    Format response data according to RESPONSE_FORMAT setting.
+
+    If RESPONSE_FORMAT is "toon", converts the data to TOON format (string).
+    If RESPONSE_FORMAT is "json", returns data as-is (will be JSON serialized by MCP).
+
+    Args:
+        data: The response data (dict, list, or any JSON-serializable value)
+
+    Returns:
+        Formatted response data (string for TOON, original for JSON)
+    """
+    if RESPONSE_FORMAT == "toon":
+        try:
+            toon_str = toon_encode(data, {
+                "indent": 2,
+                "delimiter": ","
+            })
+            return toon_str
+        except Exception as e:
+            logger.warning("TOON encoding failed, falling back to JSON: %s", e)
+            return data
+    else:
+        return data
+
+
+# ---------------------------------------------------------------------------
+# MCP server instance
+# ---------------------------------------------------------------------------
 
 mcp = FastMCP(
     "app-ranking",
@@ -39,7 +86,7 @@ def get_all_historical_files(app_type: str) -> list:
                     dt = parsedate_to_datetime(updated_str)
                     files_with_timestamps.append((f, dt))
         except Exception as e:
-            print(f"DEBUG: Error processing {f}: {e}")
+            logger.debug(f"DEBUG: Error processing {f}: {e}")
             continue
 
     files_with_timestamps.sort(key=lambda x: x[1])
@@ -100,7 +147,7 @@ def get_app_timeline_by_id(app_id: str, app_type: str = "free") -> Dict[str, Any
     app_timelines = build_app_timeline(app_type)
 
     if app_id not in app_timelines:
-        return {}
+        return _format_response({})
 
     timeline_data = app_timelines[app_id]
     raw_timeline = timeline_data.get("timeline", [])
@@ -138,13 +185,13 @@ def get_app_timeline_by_id(app_id: str, app_type: str = "free") -> Dict[str, Any
 
             rank_timeline.append(entry)
 
-    return {
+    return _format_response({
         "appId": app_id,
         "appName": timeline_data.get("appName"),
         "artistName": timeline_data.get("artistName"),
         "rankTimeline": rank_timeline,
         "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-    }
+    })
 
 
 @mcp.tool()
@@ -162,7 +209,7 @@ def get_app_timeline_by_name(app_name: str, app_type: str = "free") -> Dict[str,
         if timeline_data.get("appName") == app_name:
             return get_app_timeline_by_id(app_id, app_type)
 
-    return {}
+    return _format_response({})
 
 
 @mcp.tool()
@@ -177,7 +224,7 @@ def get_top_n_apps(n: int = 10, app_type: str = "free") -> Dict[str, Any]:
     files_with_timestamps = get_all_historical_files(app_type)
 
     if not files_with_timestamps:
-        return {"apps": [], "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}
+        return _format_response({"apps": [], "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')})
 
     latest_file, latest_dt = files_with_timestamps[-1]
 
@@ -197,12 +244,12 @@ def get_top_n_apps(n: int = 10, app_type: str = "free") -> Dict[str, Any]:
             for i, app in enumerate(results)
         ]
 
-        return {
+        return _format_response({
             "apps": apps,
             "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-        }
+        })
     except (json.JSONDecodeError, IOError):
-        return {"apps": [], "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')}
+        return _format_response({"apps": [], "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')})
 
 
 def main():
