@@ -136,7 +136,7 @@ def build_app_timeline(app_type: str) -> dict:
 
 
 @mcp.tool()
-def get_app_timeline_by_id(app_id: str, app_type: str = "free") -> Dict[str, Any]:
+def get_app_timeline_by_id(app_id: str, app_type: str = "free") -> Any:
     """
     Get the historical rank timeline for a specific app ID.
 
@@ -195,7 +195,7 @@ def get_app_timeline_by_id(app_id: str, app_type: str = "free") -> Dict[str, Any
 
 
 @mcp.tool()
-def get_app_timeline_by_name(app_name: str, app_type: str = "free") -> Dict[str, Any]:
+def get_app_timeline_by_name(app_name: str, app_type: str = "free") -> Any:
     """
     Get an app's timeline by its name.
 
@@ -213,7 +213,7 @@ def get_app_timeline_by_name(app_name: str, app_type: str = "free") -> Dict[str,
 
 
 @mcp.tool()
-def get_top_n_apps(n: int = 10, app_type: str = "free") -> Dict[str, Any]:
+def get_top_n_apps(n: int = 10, app_type: str = "free") -> Any:
     """
     Get the top N apps live from the latest available snapshot.
 
