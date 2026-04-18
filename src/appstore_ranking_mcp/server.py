@@ -252,6 +252,97 @@ def get_top_n_apps(n: int = 10, app_type: str = "free") -> Any:
         return _format_response({"apps": [], "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')})
 
 
+@mcp.tool()
+def get_top_gainers_losers(time_period: str, limit: int = 10, app_type: str = "free", mode: str = "both") -> Any:
+    """
+    Get the top gainers and losers in app rankings over a specified time period.
+
+    Args:
+        time_period: The time period to analyze (e.g., '5m', '30m', '1h', '2d', '1w'). Supported units: m (minutes), h (hours), d (days), w (weeks).
+        limit: The number of top gainers and losers to return. Defaults to 10.
+        app_type: Either 'free' or 'paid'. Defaults to 'free'.
+        mode: Determine what to return: 'gainers', 'losers', or 'both'. Defaults to 'both'.
+    """
+    import re
+    from datetime import timedelta
+
+    match = re.match(r"^(\d+)([mhdw])$", time_period.lower())
+    if not match:
+        return _format_response({"error": "Invalid time period format. Use format like '5m', '1h', '2d', '1w'."})
+
+    value, unit = match.groups()
+    value = int(value)
+
+    if unit == 'm':
+        td = timedelta(minutes=value)
+    elif unit == 'h':
+        td = timedelta(hours=value)
+    elif unit == 'd':
+        td = timedelta(days=value)
+    elif unit == 'w':
+        td = timedelta(weeks=value)
+
+    app_timelines = build_app_timeline(app_type)
+
+    rank_changes = []
+
+    for app_id, data in app_timelines.items():
+        timeline = data.get("timeline", [])
+        if not timeline:
+            continue
+
+        latest_entry = timeline[-1]
+        try:
+            latest_entry_dt = datetime.fromisoformat(latest_entry["time"])
+        except ValueError:
+            continue
+
+        target_dt_for_app = latest_entry_dt - td
+
+        closest_entry = None
+        min_diff = None
+
+        for entry in timeline:
+            try:
+                entry_dt = datetime.fromisoformat(entry["time"])
+                diff = abs((entry_dt - target_dt_for_app).total_seconds())
+                if min_diff is None or diff < min_diff:
+                    min_diff = diff
+                    closest_entry = entry
+            except ValueError:
+                continue
+
+        if closest_entry and closest_entry != latest_entry:
+            old_rank = closest_entry["rank"]
+            new_rank = latest_entry["rank"]
+            change = old_rank - new_rank
+
+            if change != 0:
+                rank_changes.append({
+                    "appId": app_id,
+                    "appName": data.get("appName"),
+                    "artistName": data.get("artistName"),
+                    "oldRank": old_rank,
+                    "newRank": new_rank,
+                    "rankChange": change
+                })
+
+    gainers = sorted([r for r in rank_changes if r["rankChange"] > 0], key=lambda x: x["rankChange"], reverse=True)[:limit]
+    losers = sorted([r for r in rank_changes if r["rankChange"] < 0], key=lambda x: x["rankChange"])[:limit]
+
+    result = {
+        "timePeriod": time_period,
+        "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+    }
+
+    if mode.lower() in ("both", "gainers"):
+        result["gainers"] = gainers
+    if mode.lower() in ("both", "losers"):
+        result["losers"] = losers
+
+    return _format_response(result)
+
+
 def main():
     mcp.run(transport="stdio")
 
