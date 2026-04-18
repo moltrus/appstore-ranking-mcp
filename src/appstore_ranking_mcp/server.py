@@ -204,9 +204,11 @@ def get_app_timeline_by_name(app_name: str, app_type: str = "free") -> Any:
         app_type: Either 'free' or 'paid'. Defaults to 'free'.
     """
     app_timelines = build_app_timeline(app_type)
+    search_name = app_name.lower()
 
     for app_id, timeline_data in app_timelines.items():
-        if timeline_data.get("appName") == app_name:
+        current_name = (timeline_data.get("appName") or "").lower()
+        if search_name in current_name:
             return get_app_timeline_by_id(app_id, app_type)
 
     return _format_response({})
