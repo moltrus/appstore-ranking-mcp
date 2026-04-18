@@ -299,16 +299,14 @@ def get_top_gainers_losers(time_period: str, limit: int = 10, app_type: str = "f
 
         target_dt_for_app = latest_entry_dt - td
 
+        # Find the most recent entry that is at or before the target time
         closest_entry = None
-        min_diff = None
-
-        for entry in timeline:
+        for entry in reversed(timeline):
             try:
                 entry_dt = datetime.fromisoformat(entry["time"])
-                diff = abs((entry_dt - target_dt_for_app).total_seconds())
-                if min_diff is None or diff < min_diff:
-                    min_diff = diff
+                if entry_dt <= target_dt_for_app:
                     closest_entry = entry
+                    break
             except ValueError:
                 continue
 
