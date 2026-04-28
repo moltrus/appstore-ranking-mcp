@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from collections import defaultdict
 from typing import Any, Dict
 from email.utils import parsedate_to_datetime
@@ -190,7 +190,7 @@ def get_app_timeline_by_id(app_id: str, app_type: str = "free") -> Any:
         "appName": timeline_data.get("appName"),
         "artistName": timeline_data.get("artistName"),
         "rankTimeline": rank_timeline,
-        "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        "lastUpdated": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     })
 
 
@@ -226,7 +226,7 @@ def get_top_n_apps(n: int = 10, app_type: str = "free") -> Any:
     files_with_timestamps = get_all_historical_files(app_type)
 
     if not files_with_timestamps:
-        return _format_response({"apps": [], "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')})
+        return _format_response({"apps": [], "lastUpdated": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')})
 
     latest_file, latest_dt = files_with_timestamps[-1]
 
@@ -248,10 +248,10 @@ def get_top_n_apps(n: int = 10, app_type: str = "free") -> Any:
 
         return _format_response({
             "apps": apps,
-            "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+            "lastUpdated": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
         })
     except (json.JSONDecodeError, IOError):
-        return _format_response({"apps": [], "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')})
+        return _format_response({"apps": [], "lastUpdated": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')})
 
 
 @mcp.tool()
@@ -332,7 +332,7 @@ def get_top_gainers_losers(time_period: str, limit: int = 10, app_type: str = "f
 
     result = {
         "timePeriod": time_period,
-        "lastUpdated": datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+        "lastUpdated": datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     }
 
     if mode.lower() in ("both", "gainers"):
@@ -342,6 +342,127 @@ def get_top_gainers_losers(time_period: str, limit: int = 10, app_type: str = "f
 
     return _format_response(result)
 
+
+@mcp.tool()
+def get_rankings_by_datetime(target_datetime: str, limit: int = 50, app_type: str = "free", detailed: bool = False) -> Any:
+    """
+    Get the app rankings closest to a specific date and time, or detailed day-level insights.
+
+    Args:
+        target_datetime: The target date and time (ISO format, e.g., '2026-04-06T14:30:00').
+        limit: The number of apps to retrieve or check against. Defaults to 50.
+        app_type: Either 'free' or 'paid'. Defaults to 'free'.
+        detailed: If True, returns a summary of changes across the entire day of the target_datetime (new entries, dropouts, rank changes).
+    """
+    try:
+        # Handle basic ISO formats and 'Z' timezone indicator
+        target_dt = datetime.fromisoformat(target_datetime.replace('Z', '+00:00')).replace(tzinfo=None)
+    except ValueError:
+        return _format_response({"error": "Invalid datetime format. Please use ISO format (e.g., '2026-04-06T14:30:00')."})
+
+    files_with_timestamps = get_all_historical_files(app_type)
+    if not files_with_timestamps:
+        return _format_response({"apps": [], "error": "No historical data available."})
+
+    if not detailed:
+        closest_file = None
+        min_diff = None
+
+        for filepath, dt in files_with_timestamps:
+            # Compute absolute time difference
+            diff = abs((dt.replace(tzinfo=None) - target_dt).total_seconds())
+            if min_diff is None or diff < min_diff:
+                min_diff = diff
+                closest_file = (filepath, dt)
+
+        if not closest_file:
+            return _format_response({"apps": []})
+
+        filepath, closest_dt = closest_file
+
+        try:
+            with open(filepath, "r") as f:
+                data = json.load(f)
+
+            results = data.get("feed", {}).get("results", [])[:limit]
+
+            apps = [
+                {
+                    "rank": i + 1,
+                    "appId": app.get("id"),
+                    "appName": app.get("name"),
+                    "artistName": app.get("artistName")
+                }
+                for i, app in enumerate(results)
+            ]
+
+            return _format_response({
+                "targetDatetime": target_datetime,
+                "closestMatchDatetime": closest_dt.isoformat(),
+                "apps": apps
+            })
+        except (json.JSONDecodeError, IOError):
+            return _format_response({"error": "Failed to read data file.", "apps": []})
+
+    else:
+        # Detailed mode: Summarize the whole day
+        target_date = target_dt.date()
+        day_files = [(fp, dt) for fp, dt in files_with_timestamps if dt.date() == target_date]
+
+        if not day_files:
+            return _format_response({"error": f"No historical data available for the date {target_date}."})
+
+        # Compare the first and last snapshot of the day
+        first_fp, first_dt = day_files[0]
+        last_fp, last_dt = day_files[-1]
+
+        try:
+            with open(first_fp, "r") as f:
+                first_results = json.load(f).get("feed", {}).get("results", [])[:limit]
+            with open(last_fp, "r") as f:
+                last_results = json.load(f).get("feed", {}).get("results", [])[:limit]
+        except (json.JSONDecodeError, IOError):
+            return _format_response({"error": "Failed to read data files for detailed insights."})
+
+        start_apps = {app.get("id"): {"rank": i + 1, "appName": app.get("name"), "artistName": app.get("artistName")} for i, app in enumerate(first_results)}
+        end_apps = {app.get("id"): {"rank": i + 1, "appName": app.get("name"), "artistName": app.get("artistName")} for i, app in enumerate(last_results)}
+
+        entered = []
+        left = []
+        changed = []
+
+        for app_id, end_info in end_apps.items():
+            if app_id not in start_apps:
+                entered.append(end_info)
+            else:
+                start_info = start_apps[app_id]
+                if start_info["rank"] != end_info["rank"]:
+                    changed.append({
+                        "appId": app_id,
+                        "appName": end_info["appName"],
+                        "artistName": end_info["artistName"],
+                        "startRank": start_info["rank"],
+                        "endRank": end_info["rank"],
+                        "change": start_info["rank"] - end_info["rank"]  # Positive means moved up
+                    })
+
+        for app_id, start_info in start_apps.items():
+            if app_id not in end_apps:
+                left.append(start_info)
+
+        changed.sort(key=lambda x: x["startRank"])
+
+        return _format_response({
+            "targetDate": str(target_date),
+            "snapshotsAnalyzed": len(day_files),
+            "startTime": first_dt.isoformat(),
+            "endTime": last_dt.isoformat(),
+            "insights": {
+                "newEntries": entered,
+                "dropouts": left,
+                "rankChanges": changed
+            }
+        })
 
 def main():
     mcp.run(transport="stdio")
