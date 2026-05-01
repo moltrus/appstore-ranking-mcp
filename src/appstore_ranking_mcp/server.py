@@ -3,7 +3,7 @@ import logging
 import os
 from datetime import datetime, timezone
 from collections import defaultdict
-from typing import Any, Dict
+from typing import Any
 from email.utils import parsedate_to_datetime
 from mcp.server.fastmcp import FastMCP
 from dotenv import load_dotenv
@@ -463,6 +463,102 @@ def get_rankings_by_datetime(target_datetime: str, limit: int = 50, app_type: st
                 "rankChanges": changed
             }
         })
+
+
+@mcp.tool()
+def get_new_entries(target_date: str = None, lookback_days: int = 1, limit: int = 50, app_type: str = "free") -> Any:
+    """
+    Get the apps that have newly entered the top rankings on a specific date compared to a previous date.
+
+    Args:
+        target_date: The target date (e.g., '2026-04-28' or ISO format). Defaults to the latest available data.
+        lookback_days: The number of days to look back to determine if an app is 'new'. Defaults to 1.
+        limit: The number of top apps to check (up to 50). Defaults to 50.
+        app_type: Either 'free' or 'paid'. Defaults to 'free'.
+    """
+    from datetime import timedelta
+
+    files_with_timestamps = get_all_historical_files(app_type)
+    if not files_with_timestamps:
+        return _format_response({"error": "No historical data available."})
+
+    if lookback_days < 1:
+        return _format_response({"error": "lookback_days must be >= 1"})
+
+    if limit < 1:
+        return _format_response({"error": "limit must be >= 1"})
+    if limit > 50:
+        limit = 50
+
+    # Resolve target snapshot
+    if not target_date:
+        target_fp, target_dt = files_with_timestamps[-1]
+    else:
+        try:
+            if len(target_date) == 10:  # YYYY-MM-DD
+                parsed_target_date = datetime.fromisoformat(target_date).date()
+                day_snapshots = [(fp, dt) for fp, dt in files_with_timestamps if dt.date() == parsed_target_date]
+                if not day_snapshots:
+                    return _format_response({"error": f"No data found for date: {target_date}"})
+                target_fp, target_dt = day_snapshots[-1]  # Latest snapshot of that day
+            else:
+                # ISO datetime: choose the latest snapshot at-or-before the requested time
+                parsed_target_dt = datetime.fromisoformat(target_date.replace("Z", "+00:00"))
+                eligible = [(fp, dt) for fp, dt in files_with_timestamps if dt <= parsed_target_dt]
+                if eligible:
+                    target_fp, target_dt = eligible[-1]
+                else:
+                    target_fp, target_dt = files_with_timestamps[0]
+        except ValueError:
+            return _format_response({"error": "Invalid target_date format. Use 'YYYY-MM-DD' or ISO datetime."})
+
+    # Resolve baseline snapshot: use calendar-day lookback (latest snapshot on the baseline date).
+    baseline_date = (target_dt - timedelta(days=lookback_days)).date()
+    baseline_snapshots = [(fp, dt) for fp, dt in files_with_timestamps if dt.date() == baseline_date]
+
+    # If we have no data for the baseline date, walk backwards until we find a day with data.
+    if not baseline_snapshots:
+        candidates = [(fp, dt) for fp, dt in files_with_timestamps if dt.date() < target_dt.date()]
+        candidates.sort(key=lambda x: x[1])
+        while candidates and candidates[-1][1].date() > baseline_date:
+            candidates.pop()
+        if candidates:
+            baseline_fp, baseline_dt = candidates[-1]
+        else:
+            baseline_fp, baseline_dt = files_with_timestamps[0]
+    else:
+        baseline_fp, baseline_dt = baseline_snapshots[-1]
+
+    try:
+        with open(target_fp, "r") as f:
+            target_data = json.load(f).get("feed", {}).get("results", [])[:limit]
+        with open(baseline_fp, "r") as f:
+            baseline_data = json.load(f).get("feed", {}).get("results", [])[:limit]
+    except (json.JSONDecodeError, IOError):
+        return _format_response({"error": "Failed to read data files for new entries."})
+
+    baseline_ids = {app.get("id") for app in baseline_data}
+
+    new_entries = []
+    for i, app in enumerate(target_data):
+        if app.get("id") not in baseline_ids:
+            new_entries.append({
+                "appId": app.get("id"),
+                "appName": app.get("name"),
+                "artistName": app.get("artistName"),
+                "startRank": None,
+                "endRank": i + 1,
+                "rankChange": None
+            })
+
+    return _format_response({
+        "targetTime": target_dt.isoformat(),
+        "baselineTime": baseline_dt.isoformat(),
+        "lookbackDays": lookback_days,
+        "targetFile": os.path.basename(target_fp),
+        "baselineFile": os.path.basename(baseline_fp),
+        "newEntries": new_entries
+    })
 
 def main():
     mcp.run(transport="stdio")
