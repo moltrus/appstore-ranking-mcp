@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rank Flow Studio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1"></script>
+    <style>
+        :root {
+            --bg: #f4f5f1;
+            --panel: #ffffff;
+            --panel-2: #f8f9f5;
+            --line: #dde2d6;
+            --ink: #161a18;
+            --ink-soft: #5e665f;
+            --accent: #116466;
+            --accent-strong: #0c4f51;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            font-family: "IBM Plex Sans", sans-serif;
+            color: var(--ink);
+            background:
+                radial-gradient(circle at 95% 6%, #98dfd7 0%, transparent 24%),
+                radial-gradient(circle at 10% 92%, #f2d89a 0%, transparent 24%),
+                var(--bg);
+            overflow: hidden;
+        }
+
+        .layout {
+            height: 100%;
+            display: flex;
+            gap: 14px;
+            padding: 14px;
+        }
+
+        .sidebar {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            box-shadow: 0 18px 30px rgba(32, 44, 33, 0.08);
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+            overflow-y: auto;
+            overflow-x: hidden;
+            width: 320px;
+            flex: 0 0 320px;
+            transition: width 0.2s ease, opacity 0.2s ease;
+        }
+
+        .layout.collapsed .sidebar {
+            width: 0;
+            flex-basis: 0;
+            padding: 0;
+            border: 0;
+            box-shadow: none;
+            opacity: 0;
+            overflow: hidden;
+        }
+
+        .side-head {
+            border-bottom: 1px solid var(--line);
+            padding: 18px;
+        }
+
+        .title {
+            font-family: "Space Grotesk", sans-serif;
+            font-size: 1.25rem;
+            line-height: 1.1;
+            letter-spacing: -0.02em;
+            margin-bottom: 8px;
+        }
+
+        .subtitle {
+            color: var(--ink-soft);
+            font-size: 0.9rem;
+            line-height: 1.35;
+        }
+
+        .controls {
+            display: grid;
+            gap: 10px;
+            padding: 16px 18px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .control-row {
+            display: grid;
+            gap: 6px;
+        }
+
+        .control-row label {
+            font-size: 0.8rem;
+            color: var(--ink-soft);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            font-weight: 700;
+        }
+
+        select,
+        input,
+        button,
+        .nav-link {
+            border: 1px solid #cfd6c8;
+            border-radius: 11px;
+            min-height: 38px;
+            padding: 8px 10px;
+            font-family: inherit;
+            font-size: 0.92rem;
+            background: #ffffff;
+            color: var(--ink);
+        }
+
+        .inline-buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        button {
+            cursor: pointer;
+            font-weight: 700;
+            transition: background 0.15s ease, transform 0.15s ease;
+        }
+
+        button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #ffffff;
+        }
+
+        button.primary:hover {
+            background: var(--accent-strong);
+            transform: translateY(-1px);
+        }
+
+        button.ghost {
+            background: #f5f7f2;
+        }
+
+        button.ghost:hover {
+            background: #e9eee4;
+            transform: translateY(-1px);
+        }
+
+        .nav-link {
+            text-decoration: none;
+            display: inline-grid;
+            place-items: center;
+            font-weight: 700;
+            background: #f5f7f2;
+        }
+
+        .nav-link:hover {
+            background: #e9eee4;
+        }
+
+        .metrics {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            padding: 0 18px 14px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .metric {
+            background: var(--panel-2);
+            border: 1px solid var(--line);
+            border-radius: 11px;
+            padding: 9px;
+        }
+
+        .metric .k {
+            color: var(--ink-soft);
+            font-size: 0.72rem;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+        }
+
+        .metric .v {
+            font-family: "Space Grotesk", sans-serif;
+            font-size: 1.02rem;
+            font-weight: 700;
+            margin-top: 3px;
+        }
+
+        .app-picker {
+            max-height: 220px;
+            overflow: auto;
+            border: 1px solid #cfd6c8;
+            border-radius: 11px;
+            background: #ffffff;
+            padding: 6px;
+            display: grid;
+            gap: 4px;
+        }
+
+        .app-option {
+            display: grid;
+            grid-template-columns: 18px 1fr;
+            gap: 8px;
+            align-items: center;
+            padding: 5px 6px;
+            border-radius: 8px;
+            cursor: pointer;
+            color: var(--ink);
+            font-size: 0.86rem;
+            text-transform: none;
+            letter-spacing: 0;
+            font-weight: 500;
+        }
+
+        .app-option:hover {
+            background: #f5f7f2;
+        }
+
+        .app-option input {
+            width: 15px;
+            height: 15px;
+            margin: 0;
+        }
+
+        .legend {
+            padding: 14px 10px 14px 14px;
+            overflow: visible;
+            min-height: 0;
+            display: grid;
+            gap: 8px;
+            align-content: start;
+        }
+
+        .legend-item {
+            display: grid;
+            grid-template-columns: 32px 1fr;
+            gap: 9px;
+            align-items: center;
+            border: 1px solid var(--line);
+            background: #fafbf8;
+            border-radius: 11px;
+            padding: 7px;
+        }
+
+        .legend-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 8px;
+            object-fit: cover;
+            border: 1px solid #d6dccf;
+            background: #ecefe8;
+        }
+
+        .legend-title {
+            font-size: 0.84rem;
+            line-height: 1.2;
+            font-weight: 700;
+            margin-bottom: 2px;
+        }
+
+        .legend-meta {
+            color: var(--ink-soft);
+            font-size: 0.76rem;
+        }
+
+        .stage {
+            background: var(--panel);
+            border: 1px solid var(--line);
+            border-radius: 20px;
+            box-shadow: 0 18px 30px rgba(32, 44, 33, 0.08);
+            padding: 16px;
+            min-width: 0;
+            min-height: 0;
+            display: grid;
+            grid-template-rows: auto 1fr;
+            gap: 12px;
+            flex: 1;
+        }
+
+        .stage-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .stage-actions {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .stage-head h2 {
+            font-family: "Space Grotesk", sans-serif;
+            font-size: 1.12rem;
+        }
+
+        .hint {
+            color: var(--ink-soft);
+            font-size: 0.85rem;
+        }
+
+        .toggle-btn {
+            border: 1px solid #cfd6c8;
+            border-radius: 999px;
+            padding: 6px 12px;
+            font-size: 0.82rem;
+            font-weight: 700;
+            background: #f5f7f2;
+            cursor: pointer;
+            transition: background 0.15s ease, transform 0.15s ease;
+        }
+
+        .toggle-btn:hover {
+            background: #e9eee4;
+            transform: translateY(-1px);
+        }
+
+        .chart-wrap {
+            background: #f9faf6;
+            border: 1px solid var(--line);
+            border-radius: 16px;
+            padding: 10px;
+            min-height: 0;
+            min-width: 0;
+            position: relative;
+        }
+
+        canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        .status {
+            font-size: 0.75rem;
+            color: #5f665e;
+            background: rgba(249, 250, 246, 0.9);
+            border: 1px solid var(--line);
+            border-radius: 999px;
+            padding: 4px 10px;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        @media (max-width: 1080px) {
+            .layout {
+                flex-direction: column;
+                overflow: auto;
+            }
+
+            html, body {
+                overflow: auto;
+            }
+
+            .sidebar {
+                min-height: 460px;
+            }
+
+            .stage {
+                min-height: 70vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="layout">
+        <aside class="sidebar">
+            <div class="side-head">
+                <h1 class="title">Rank Flow Studio</h1>
+                <p class="subtitle">Explore ranking changes over time by panning, zooming, and focusing on the top movers.</p>
+            </div>
+
+            <section class="controls">
+                <div class="control-row">
+                    <label for="type-select">Category</label>
+                    <select id="type-select">
+                        <option value="free">Top Free Apps</option>
+                        <option value="paid">Top Paid Apps</option>
+                    </select>
+                </div>
+                <div class="control-row">
+                    <label for="top-n">Apps To Plot</label>
+                    <input id="top-n" type="number" min="5" max="30" value="15">
+                </div>
+                <div class="control-row">
+                    <label for="app-picker">Select Apps (optional)</label>
+                    <div id="app-picker" class="app-picker"></div>
+                </div>
+                <div class="control-row">
+                    <label for="auto-refresh">
+                        <input id="auto-refresh" type="checkbox">
+                        Auto refresh every 10s
+                    </label>
+                </div>
+                <div class="inline-buttons">
+                    <button id="apply-btn" class="primary" type="button">Apply</button>
+                    <button id="reset-btn" class="ghost" type="button">Reset Zoom</button>
+                </div>
+                <div class="inline-buttons">
+                    <button id="refresh-btn" class="ghost" type="button">Refresh</button>
+                    <a class="nav-link" href="/">Back</a>
+                </div>
+            </section>
+
+            <section class="metrics">
+                <div class="metric"><span class="k">Series</span><div id="metric-series" class="v">-</div></div>
+                <div class="metric"><span class="k">Snapshots</span><div id="metric-points" class="v">-</div></div>
+                <div class="metric"><span class="k">Best Rank</span><div id="metric-best" class="v">-</div></div>
+                <div class="metric"><span class="k">Worst Rank</span><div id="metric-worst" class="v">-</div></div>
+            </section>
+
+            <section id="legend" class="legend"></section>
+        </aside>
+
+        <section class="stage">
+            <div class="stage-head">
+                <h2 id="stage-title">Top Free App Rank Timeline</h2>
+                <div class="stage-actions">
+                    <div id="status" class="status">Auto refresh every 10s</div>
+                    <div class="hint">Wheel to zoom, drag to pan, pinch on trackpad/touch</div>
+                    <button id="toggle-sidebar" class="toggle-btn" type="button" aria-expanded="true">Hide controls</button>
+                </div>
+            </div>
+            <div class="chart-wrap">
+                <canvas id="timeline-chart"></canvas>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let timelineChart = null;
+        let cache = {};
+        let selectedByType = { free: [], paid: [] };
+        let autoRefreshTimer = null;
+        const layout = document.querySelector(".layout");
+        const sidebarToggle = document.getElementById("toggle-sidebar");
+        const sidebar = document.querySelector(".sidebar");
+
+        function colorAt(i) {
+            const hue = (i * 47) % 360;
+            return `hsl(${hue} 68% 44%)`;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement("div");
+            div.textContent = text || "";
+            return div.innerHTML;
+        }
+
+        function parseInputs() {
+            const type = document.getElementById("type-select").value;
+            const topN = Math.max(5, Math.min(30, Number(document.getElementById("top-n").value) || 15));
+            return { type, topN };
+        }
+
+        function getSelectedIds() {
+            const picker = document.getElementById("app-picker");
+            return Array.from(picker.querySelectorAll("input[type='checkbox']:checked")).map((input) => input.value);
+        }
+
+        function setStatus(text) {
+            document.getElementById("status").textContent = text;
+        }
+
+        function getLatestRank(entry) {
+            if (!entry || !entry.timeline || entry.timeline.length === 0) {
+                return 999;
+            }
+            return entry.timeline[entry.timeline.length - 1].rank;
+        }
+
+        function updateSelectOptions(payload, type) {
+            const picker = document.getElementById("app-picker");
+            const previous = new Set(selectedByType[type] || []);
+            const ids = Object.keys(payload).sort((a, b) => getLatestRank(payload[a]) - getLatestRank(payload[b]));
+            picker.innerHTML = ids.map((id) => {
+                const app = payload[id];
+                const latest = getLatestRank(app);
+                const isSelected = previous.has(id) ? " selected" : "";
+                const checked = isSelected ? " checked" : "";
+                return `
+                    <label class="app-option" title="${escapeHtml(app.appName || "Unknown")}">
+                        <input type="checkbox" value="${id}"${checked}>
+                        <span>#${latest} ${escapeHtml(app.appName || "Unknown")}</span>
+                    </label>
+                `;
+            }).join("");
+            selectedByType[type] = getSelectedIds();
+        }
+
+        function buildLegend(orderedIds, data) {
+            const legend = document.getElementById("legend");
+            legend.innerHTML = orderedIds.map((id) => {
+                const app = data[id];
+                const latest = getLatestRank(app);
+                const icon = app.artworkUrl || "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2732%27 height=%2732%27%3E%3Crect width=%2732%27 height=%2732%27 fill=%27%23ecefe8%27/%3E%3C/svg%3E";
+                return `
+                    <article class="legend-item">
+                        <img class="legend-icon" src="${icon}" alt="${escapeHtml(app.appName)}" />
+                        <div>
+                            <div class="legend-title">${escapeHtml(app.appName || "Unknown")}</div>
+                            <div class="legend-meta">Current rank #${latest}</div>
+                        </div>
+                    </article>
+                `;
+            }).join("");
+        }
+
+        function updateMetrics(datasets, labels) {
+            const ranks = datasets.flatMap((ds) => ds.data.filter((v) => v !== null));
+            const best = ranks.length ? Math.min(...ranks) : "-";
+            const worst = ranks.length ? Math.max(...ranks) : "-";
+            document.getElementById("metric-series").textContent = String(datasets.length);
+            document.getElementById("metric-points").textContent = String(labels.length);
+            document.getElementById("metric-best").textContent = best === "-" ? "-" : `#${best}`;
+            document.getElementById("metric-worst").textContent = worst === "-" ? "-" : `#${worst}`;
+        }
+
+        async function fetchTimeline(type, forceRefresh) {
+            const now = Date.now();
+            if (!forceRefresh && cache[type] && now - cache[type].ts < 8000) {
+                return cache[type].data;
+            }
+            const response = await fetch(`/api/timeline?type=${type}`);
+            const payload = await response.json();
+            cache[type] = { ts: now, data: payload };
+            return payload;
+        }
+
+        function buildSeries(payload, topN, selectedIds) {
+            const allIds = Object.keys(payload);
+            const rankedIds = allIds.sort((a, b) => getLatestRank(payload[a]) - getLatestRank(payload[b]));
+            const picked = selectedIds.length > 0
+                ? rankedIds.filter((id) => selectedIds.includes(id))
+                : rankedIds.slice(0, topN);
+
+            const allTimes = new Set();
+            picked.forEach((id) => {
+                payload[id].timeline.forEach((item) => allTimes.add(item.time));
+            });
+
+            const sortedTimes = Array.from(allTimes).sort();
+            const labels = sortedTimes.map((t) => {
+                const d = new Date(t);
+                return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+            });
+
+            const rawTimes = sortedTimes;
+
+            const datasets = picked.map((id, index) => {
+                const item = payload[id];
+                const c = colorAt(index);
+                const map = new Map(item.timeline.map((t) => [t.time, t.rank]));
+                return {
+                    label: item.appName || "Unknown",
+                    data: sortedTimes.map((t) => map.has(t) ? map.get(t) : null),
+                    borderColor: c,
+                    backgroundColor: c,
+                    borderWidth: 2,
+                    pointRadius: 0,
+                    spanGaps: true,
+                    tension: 0.25
+                };
+            });
+
+            return { labels, rawTimes, datasets, orderedIds: picked };
+        }
+
+        function captureViewport() {
+            if (!timelineChart || !timelineChart.scales || !timelineChart.scales.x) {
+                return null;
+            }
+            return {
+                xMin: timelineChart.scales.x.min,
+                xMax: timelineChart.scales.x.max
+            };
+        }
+
+        function applyViewport(viewport, labelsLength) {
+            if (!timelineChart || !viewport) {
+                return;
+            }
+            const maxIndex = Math.max(0, labelsLength - 1);
+            const clamp = (v, low, high) => Math.max(low, Math.min(high, v));
+            timelineChart.options.scales.x.min = clamp(viewport.xMin, 0, maxIndex);
+            timelineChart.options.scales.x.max = clamp(viewport.xMax, 0, maxIndex);
+        }
+
+        async function renderChart(options = {}) {
+            const preserveView = options.preserveView === true;
+            const forceRefresh = options.forceRefresh === true;
+            const keepSelection = options.keepSelection === true;
+            const { type, topN } = parseInputs();
+            document.getElementById("stage-title").textContent = type === "free" ? "Top Free App Rank Timeline" : "Top Paid App Rank Timeline";
+
+            try {
+                const payload = await fetchTimeline(type, forceRefresh);
+                updateSelectOptions(payload, type);
+
+                if (!keepSelection) {
+                    selectedByType[type] = getSelectedIds();
+                }
+                const selectedIds = selectedByType[type] || [];
+                const { labels, rawTimes, datasets, orderedIds } = buildSeries(payload, topN, selectedIds);
+
+                buildLegend(orderedIds, payload);
+                updateMetrics(datasets, labels);
+
+                const viewport = preserveView ? captureViewport() : null;
+
+                if (!timelineChart) {
+                    const customBackgroundPlugin = {
+                        id: 'customBackground',
+                        beforeDraw: (chart) => {
+                            const { ctx, chartArea: { top, bottom, left, right }, scales: { x } } = chart;
+                            const raw = chart.data.rawTimes;
+                            if (!raw || raw.length === 0) return;
+
+                            const minIndex = Math.max(0, Math.floor(x.min || 0));
+                            const maxIndex = Math.min(raw.length - 1, Math.ceil(x.max || raw.length - 1));
+
+                            ctx.save();
+
+                            let currentDay = null;
+                            let currentDayOfWeek = null;
+                            let startX = left;
+
+                            const dayColors = [
+                                'rgba(255, 99, 132, 0.15)', // Sunday: Red
+                                'rgba(54, 162, 235, 0.15)', // Monday: Blue
+                                'rgba(255, 206, 86, 0.15)', // Tuesday: Yellow
+                                'rgba(75, 192, 192, 0.15)', // Wednesday: Cyan
+                                'rgba(153, 102, 255, 0.15)',// Thursday: Purple
+                                'rgba(255, 159, 64, 0.15)', // Friday: Orange
+                                'rgba(201, 203, 207, 0.15)' // Saturday: Grey
+                            ];
+
+                            for (let i = minIndex; i <= maxIndex; i++) {
+                                const dateObj = new Date(raw[i]);
+                                const dayStr = dateObj.toLocaleDateString();
+                                const tickX = x.getPixelForValue(i);
+
+                                if (currentDay !== dayStr) {
+                                    if (currentDay !== null) {
+                                        ctx.fillStyle = dayColors[currentDayOfWeek];
+                                        const w = tickX - startX;
+                                        if (w > 0) ctx.fillRect(startX, top, w, bottom - top);
+                                    }
+                                    currentDay = dayStr;
+                                    currentDayOfWeek = dateObj.getDay();
+                                    startX = tickX;
+                                }
+
+                                if (i === maxIndex) {
+                                    if (currentDayOfWeek !== null) {
+                                        ctx.fillStyle = dayColors[currentDayOfWeek];
+                                        ctx.fillRect(startX, top, right - startX, bottom - top);
+                                    }
+                                }
+                            }
+                            ctx.restore();
+                        }
+                    };
+
+                    const ctx = document.getElementById("timeline-chart").getContext("2d");
+                    timelineChart = new Chart(ctx, {
+                        type: "line",
+                        data: { labels, rawTimes, datasets },
+                        plugins: [customBackgroundPlugin],
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            interaction: {
+                                mode: "nearest",
+                                intersect: false
+                            },
+                            scales: {
+                                x: {
+                                    ticks: {
+                                        maxRotation: 45,
+                                        minRotation: 25,
+                                        autoSkip: true,
+                                        color: "#4f564f"
+                                    },
+                                    grid: { 
+                                        color: (context) => {
+                                            if (context.index !== undefined && rawTimes && rawTimes[context.index]) {
+                                                const dayOfWeek = new Date(rawTimes[context.index]).getDay();
+                                                const gridColors = [
+                                                    'rgba(255, 99, 132, 0.4)', // Sunday
+                                                    'rgba(54, 162, 235, 0.4)', // Monday
+                                                    'rgba(255, 206, 86, 0.4)', // Tuesday
+                                                    'rgba(75, 192, 192, 0.4)', // Wednesday
+                                                    'rgba(153, 102, 255, 0.4)',// Thursday
+                                                    'rgba(255, 159, 64, 0.4)', // Friday
+                                                    'rgba(201, 203, 207, 0.4)' // Saturday
+                                                ];
+                                                return gridColors[dayOfWeek];
+                                            }
+                                            return "rgba(140, 151, 136, 0.4)";
+                                        },
+                                        lineWidth: 2
+                                    }
+                                },
+                                y: {
+                                    reverse: true,
+                                    min: 0,
+                                    max: 50,
+                                    ticks: { color: "#4f564f" },
+                                    grid: { color: "rgba(140, 151, 136, 0.22)" }
+                                }
+                            },
+                            plugins: {
+                                legend: {
+                                    display: false
+                                },
+                                tooltip: {
+                                    enabled: false,
+                                    external: function(context) {
+                                        // Tooltip Element
+                                        let tooltipEl = document.getElementById('chartjs-tooltip');
+
+                                        // Create element on first render
+                                        if (!tooltipEl) {
+                                            tooltipEl = document.createElement('div');
+                                            tooltipEl.id = 'chartjs-tooltip';
+                                            tooltipEl.style.background = '#163938';
+                                            tooltipEl.style.color = '#ffffff';
+                                            tooltipEl.style.border = '1px solid #2f5f5d';
+                                            tooltipEl.style.borderRadius = '8px';
+                                            tooltipEl.style.padding = '8px 12px';
+                                            tooltipEl.style.boxShadow = '0 8px 24px rgba(0,0,0,0.15)';
+                                            tooltipEl.style.pointerEvents = 'none';
+                                            tooltipEl.style.position = 'absolute';
+                                            tooltipEl.style.zIndex = '9999';
+                                            tooltipEl.style.transform = 'translate(-50%, -100%)';
+                                            tooltipEl.style.transition = 'none';
+                                            tooltipEl.style.marginTop = '-12px';
+                                            tooltipEl.style.fontFamily = '"IBM Plex Sans", sans-serif';
+                                            tooltipEl.style.fontSize = '0.85rem';
+                                            document.body.appendChild(tooltipEl);
+                                        }
+
+                                        const tooltipModel = context.tooltip;
+                                        if (tooltipModel.opacity === 0) {
+                                            tooltipEl.style.opacity = 0;
+                                            return;
+                                        }
+
+                                        if (tooltipModel.body) {
+                                            const titleLines = tooltipModel.title || [];
+                                            const bodyLines = tooltipModel.body.map(b => b.lines);
+
+                                            let innerHtml = '<div>';
+                                            titleLines.forEach(title => {
+                                                innerHtml += '<div style="font-weight: 700; margin-bottom: 6px;">' + title + '</div>';
+                                            });
+
+                                            bodyLines.forEach((body, i) => {
+                                                const colors = tooltipModel.labelColors[i];
+                                                const colorBox = '<span style="display:inline-block; width:10px; height:10px; margin-right:6px; border-radius:2px; background:' + colors.backgroundColor + '"></span>';
+                                                innerHtml += '<div style="display:flex; align-items:center;">' + colorBox + body + '</div>';
+                                            });
+                                            innerHtml += '</div>';
+                                            tooltipEl.innerHTML = innerHtml;
+                                        }
+
+                                        const position = context.chart.canvas.getBoundingClientRect();
+                                        tooltipEl.style.opacity = 1;
+                                        tooltipEl.style.left = position.left + window.pageXOffset + tooltipModel.caretX + 'px';
+                                        tooltipEl.style.top = position.top + window.pageYOffset + tooltipModel.caretY + 'px';
+                                    },
+                                    callbacks: {
+                                        label: (ctx) => `${ctx.dataset.label}: #${ctx.parsed.y}`
+                                    }
+                                },
+                                zoom: {
+                                    pan: {
+                                        enabled: true,
+                                        mode: "x"
+                                    },
+                                    zoom: {
+                                        wheel: { enabled: true },
+                                        pinch: { enabled: true },
+                                        drag: {
+                                            enabled: true,
+                                            borderColor: "#116466",
+                                            borderWidth: 1,
+                                            backgroundColor: "rgba(17, 100, 102, 0.12)"
+                                        },
+                                        mode: "x"
+                                    },
+                                    limits: {
+                                        y: {
+                                            min: 0,
+                                            max: 50
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    });
+                } else {
+                    timelineChart.data.labels = labels;
+                    timelineChart.data.rawTimes = rawTimes;
+                    timelineChart.data.datasets = datasets;
+                    if (viewport) {
+                        applyViewport(viewport, labels.length);
+                    }
+                    timelineChart.update("none");
+                }
+            } catch (error) {
+                const legend = document.getElementById("legend");
+                legend.innerHTML = `<article class="legend-item"><div class="legend-title">Error: ${escapeHtml(error.message)}</div></article>`;
+            }
+        }
+
+        function resetZoom() {
+            if (timelineChart) {
+                timelineChart.resetZoom();
+            }
+        }
+
+        function syncAutoRefresh() {
+            const enabled = document.getElementById("auto-refresh").checked;
+            if (autoRefreshTimer) {
+                clearInterval(autoRefreshTimer);
+                autoRefreshTimer = null;
+            }
+            if (enabled) {
+                setStatus("Auto refresh ON (view preserved)");
+                autoRefreshTimer = setInterval(() => {
+                    renderChart({ preserveView: true, forceRefresh: true, keepSelection: true });
+                }, 10000);
+            } else {
+                setStatus("Auto refresh OFF");
+            }
+        }
+
+        function setSidebarCollapsed(collapsed) {
+            layout.classList.toggle("collapsed", collapsed);
+            sidebarToggle.textContent = collapsed ? "Show controls" : "Hide controls";
+            sidebarToggle.setAttribute("aria-expanded", String(!collapsed));
+        }
+
+        function refreshChartLayout() {
+            if (!timelineChart) {
+                return;
+            }
+            timelineChart.resize();
+            timelineChart.update("none");
+        }
+
+        document.getElementById("apply-btn").addEventListener("click", () => {
+            renderChart({ preserveView: false, forceRefresh: false, keepSelection: false });
+        });
+        document.getElementById("reset-btn").addEventListener("click", resetZoom);
+        document.getElementById("refresh-btn").addEventListener("click", async () => {
+            await renderChart({ preserveView: true, forceRefresh: true, keepSelection: true });
+        });
+        document.getElementById("type-select").addEventListener("change", () => {
+            renderChart({ preserveView: false, forceRefresh: false, keepSelection: true });
+        });
+        document.getElementById("app-picker").addEventListener("change", () => {
+            const type = document.getElementById("type-select").value;
+            selectedByType[type] = getSelectedIds();
+            renderChart({ preserveView: false, forceRefresh: false, keepSelection: true });
+        });
+        document.getElementById("auto-refresh").addEventListener("change", syncAutoRefresh);
+        sidebarToggle.addEventListener("click", () => {
+            setSidebarCollapsed(!layout.classList.contains("collapsed"));
+        });
+
+        sidebar.addEventListener("transitionend", (event) => {
+            if (event.propertyName === "width") {
+                refreshChartLayout();
+            }
+        });
+
+        window.addEventListener("resize", () => {
+            refreshChartLayout();
+        });
+
+        document.addEventListener("DOMContentLoaded", () => {
+            setStatus("Auto refresh OFF");
+            renderChart({ preserveView: false, forceRefresh: false, keepSelection: true });
+        });
+    </script>
+</body>
+</html>
