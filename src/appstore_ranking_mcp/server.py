@@ -163,15 +163,21 @@ def get_app_timeline_by_id(app_id: str, app_type: str = "free") -> Any:
 
         # Only record entry if rank changed or it's the first known detection
         if rank_change != 0 or prev_entry is None:
+            try:
+                curr_dt = datetime.fromisoformat(current_entry["time"])
+                day_name = curr_dt.strftime("%A")[0:3]
+            except (ValueError, TypeError):
+                day_name = None
+
             entry = {
                 "time": current_entry["time"],
+                "day": day_name,
                 "rank": current_entry["rank"]
             }
 
             # Use the last recorded entry in rank_timeline as the baseline for timeSinceLastChange
             if rank_timeline:
                 try:
-                    curr_dt = datetime.fromisoformat(current_entry["time"])
                     last_recorded_dt = datetime.fromisoformat(rank_timeline[-1]["time"])
                     entry["timeSinceLastChange"] = str(curr_dt - last_recorded_dt)
                 except (ValueError, TypeError):
