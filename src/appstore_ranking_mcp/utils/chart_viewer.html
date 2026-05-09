@@ -573,7 +573,8 @@
                     borderWidth: 2,
                     pointRadius: 0,
                     spanGaps: true,
-                    tension: 0.25
+                    normalized: true,
+                    tension: 0
                 };
             });
 
@@ -725,6 +726,21 @@
                                 }
                             },
                             plugins: {
+                                zoom: {
+                                    pan: {
+                                        enabled: true,
+                                        mode: 'xy'
+                                    },
+                                    zoom: {
+                                        wheel: {
+                                            enabled: true
+                                        },
+                                        pinch: {
+                                            enabled: true
+                                        },
+                                        mode: 'xy'
+                                    }
+                                },
                                 legend: {
                                     display: false
                                 },
