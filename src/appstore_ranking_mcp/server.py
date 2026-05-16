@@ -68,25 +68,28 @@ mcp = FastMCP(
 
 
 def get_all_historical_files(app_type: str) -> list:
+    """
+    Retrieves and sorts all historical data files for a given app type.
+    Timestamps are parsed directly from the filenames for performance.
+    """
     if not os.path.exists(STORAGE_DIR):
         return []
 
     files = [
-        os.path.join(STORAGE_DIR, f) for f in os.listdir(STORAGE_DIR)
+        f for f in os.listdir(STORAGE_DIR)
         if f.startswith(f"apps_{app_type}_") and f.endswith(".json")
     ]
 
     files_with_timestamps = []
     for f in files:
+        # Expected format: apps_free_YYYYMMDD_HHMMSS.json
         try:
-            with open(f, "r") as json_file:
-                data = json.load(json_file)
-                updated_str = data.get("feed", {}).get("updated")
-                if updated_str:
-                    dt = parsedate_to_datetime(updated_str)
-                    files_with_timestamps.append((f, dt))
-        except Exception as e:
-            logger.debug(f"DEBUG: Error processing {f}: {e}")
+            timestamp_part = f.replace(f"apps_{app_type}_", "").replace(".json", "")
+            dt = datetime.strptime(timestamp_part, "%Y%m%d_%H%M%S")
+            # Filenames are in UTC
+            files_with_timestamps.append((os.path.join(STORAGE_DIR, f), dt))
+        except ValueError:
+            logger.debug(f"DEBUG: Skipping file with invalid name format: {f}")
             continue
 
     files_with_timestamps.sort(key=lambda x: x[1])
@@ -139,7 +142,7 @@ def build_app_timeline(app_type: str) -> dict:
 def get_app_timeline_by_id(app_id: str, app_type: str = "free") -> Any:
     """
     Get the historical rank timeline for a specific app ID.
-
+    Note: All times are managed and displayed in UTC.
     Args:
         app_id: The unique Apple App Store ID.
         app_type: Either 'free' or 'paid'. Defaults to 'free'.
@@ -353,7 +356,7 @@ def get_top_gainers_losers(time_period: str, limit: int = 10, app_type: str = "f
 def get_rankings_by_datetime(target_datetime: str, limit: int = 50, app_type: str = "free", detailed: bool = False) -> Any:
     """
     Get the app rankings closest to a specific date and time, or detailed day-level insights.
-
+    Note: All times are managed and displayed in UTC.
     Args:
         target_datetime: The target date and time (ISO format, e.g., '2026-04-06T14:30:00').
         limit: The number of apps to retrieve or check against. Defaults to 50.
@@ -475,7 +478,7 @@ def get_rankings_by_datetime(target_datetime: str, limit: int = 50, app_type: st
 def get_new_entries(target_date: str = None, lookback_days: int = 1, limit: int = 50, app_type: str = "free") -> Any:
     """
     Get the apps that have newly entered the top rankings on a specific date compared to a previous date.
-
+    Note: All times are managed and displayed in UTC.
     Args:
         target_date: The target date (e.g., '2026-04-28' or ISO format). Defaults to the latest available data.
         lookback_days: The number of days to look back to determine if an app is 'new'. Defaults to 1.
