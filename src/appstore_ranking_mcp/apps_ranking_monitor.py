@@ -59,7 +59,8 @@ async def fetch_and_monitor(url: str):
 
                 response_data = response.json()
                 results = response_data.get("feed", {}).get("results", [])
-                current_hash = await get_json_hash(json.dumps(results, sort_keys=True).encode())
+                app_ids = [app.get("id") for app in results]
+                current_hash = await get_json_hash(json.dumps(app_ids).encode())
 
                 if current_hash != last_hash:
                     app_type = "paid" if "top-paid" in url else "free"
