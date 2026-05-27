@@ -111,31 +111,18 @@ def get_app_data(free_current=None, free_previous=None, paid_current=None, paid_
                 best_previous_file = None
                 previous_results = []
 
-        # if previous file was not specified or loading failed, find the first previous file that differs
+        # if previous file was not specified or loading failed, use the immediate previous file
         if not best_previous_file:
             start_index = files.index(current_filename) + 1 if current_filename in files else 1
-            for i in range(start_index, len(files)):
+            if start_index < len(files):
+                best_previous_file = files[start_index]
                 try:
-                    with open(os.path.join(STORAGE_DIR, files[i])) as f:
+                    with open(os.path.join(STORAGE_DIR, best_previous_file)) as f:
                         prev_data = json.load(f)
-                    prev_results = prev_data.get("feed", {}).get("results", [])
-
-                    ranks_differ = False
-                    if len(current_results) != len(prev_results):
-                        ranks_differ = True
-                    else:
-                        for curr_app, prev_app in zip(current_results, prev_results):
-                            if curr_app.get("id") != prev_app.get("id"):
-                                ranks_differ = True
-                                break
-
-                    if ranks_differ:
-                        best_previous_file = files[i]
-                        previous_results = prev_results
-                        break
-                except Exception as e:
-                    logger.warning(f"Error reading file {files[i]}: {e}")
-                    continue
+                    previous_results = prev_data.get("feed", {}).get("results", [])
+                except:
+                    best_previous_file = None
+                    previous_results = []
 
         data[app_type]["previous_file"] = best_previous_file
 

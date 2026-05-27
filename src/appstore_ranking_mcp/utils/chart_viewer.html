@@ -476,44 +476,78 @@
             document.getElementById("status").textContent = text;
         }
 
-        function getLatestRank(entry) {
-            if (!entry || !entry.timeline || entry.timeline.length === 0) {
-                return 999;
-            }
-            return entry.timeline[entry.timeline.length - 1].rank;
+        function getLatestSnapshotTime(payload) {
+            let latestTime = null;
+            let latestValue = -Infinity;
+
+            Object.values(payload).forEach((entry) => {
+                if (!entry || !entry.timeline) return;
+                entry.timeline.forEach((point) => {
+                    const timeValue = Date.parse(point.time);
+                    if (!Number.isNaN(timeValue) && timeValue > latestValue) {
+                        latestValue = timeValue;
+                        latestTime = point.time;
+                    }
+                });
+            });
+
+            return latestTime;
         }
 
-        function updateSelectOptions(payload, type) {
+        function buildCurrentRankMap(payload, latestTime) {
+            const current = {};
+            if (!latestTime) {
+                return current;
+            }
+
+            Object.entries(payload).forEach(([id, entry]) => {
+                if (!entry || !entry.timeline) return;
+                const match = entry.timeline.find((point) => point.time === latestTime);
+                if (match) {
+                    current[id] = match.rank;
+                }
+            });
+
+            return current;
+        }
+
+        function updateSelectOptions(payload, type, currentRankMap) {
             const picker = document.getElementById("app-picker");
             const previous = new Set(selectedByType[type] || []);
-            const ids = Object.keys(payload).sort((a, b) => getLatestRank(payload[a]) - getLatestRank(payload[b]));
+            const ids = Object.keys(payload).sort((a, b) => {
+                const rankA = currentRankMap[a] ?? Number.POSITIVE_INFINITY;
+                const rankB = currentRankMap[b] ?? Number.POSITIVE_INFINITY;
+                return rankA - rankB;
+            });
             picker.innerHTML = ids.map((id) => {
                 const app = payload[id];
-                const latest = getLatestRank(app);
+                const latest = currentRankMap[id];
                 const isSelected = previous.has(id) ? " selected" : "";
                 const checked = isSelected ? " checked" : "";
+                const labelRank = latest ? `#${latest}` : "Out";
                 return `
                     <label class="app-option" title="${escapeHtml(app.appName || "Unknown")}">
                         <input type="checkbox" value="${id}"${checked}>
-                        <span>#${latest} ${escapeHtml(app.appName || "Unknown")}</span>
+                        <span>${labelRank} ${escapeHtml(app.appName || "Unknown")}</span>
                     </label>
                 `;
             }).join("");
             selectedByType[type] = getSelectedIds();
         }
 
-        function buildLegend(orderedIds, data) {
+        function buildLegend(orderedIds, data, currentRankMap) {
             const legend = document.getElementById("legend");
             legend.innerHTML = orderedIds.map((id) => {
                 const app = data[id];
-                const latest = getLatestRank(app);
+                const latest = currentRankMap[id];
                 const icon = app.artworkUrl || "data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 width=%2732%27 height=%2732%27%3E%3Crect width=%2732%27 height=%2732%27 fill=%27%23ecefe8%27/%3E%3C/svg%3E";
+                const latestText = latest ? `Current rank #${latest}` : "Not in latest snapshot";
                 return `
                     <article class="legend-item">
                         <img class="legend-icon" src="${icon}" alt="${escapeHtml(app.appName)}" />
                         <div>
                             <div class="legend-title">${escapeHtml(app.appName || "Unknown")}</div>
-                            <div class="legend-meta">Current rank #${latest}</div>
+                            <div class="legend-meta">${latestText}</div>
                         </div>
                     </article>
                 `;
@@ -541,11 +575,13 @@
             return payload;
         }
 
-        function buildSeries(payload, topN, selectedIds) {
+        function buildSeries(payload, topN, selectedIds, currentRankMap) {
             const allIds = Object.keys(payload);
-            const rankedIds = allIds.sort((a, b) => getLatestRank(payload[a]) - getLatestRank(payload[b]));
+            const rankedIds = allIds
+                .filter((id) => currentRankMap[id])
+                .sort((a, b) => currentRankMap[a] - currentRankMap[b]);
             const picked = selectedIds.length > 0
-                ? rankedIds.filter((id) => selectedIds.includes(id))
+                ? selectedIds.filter((id) => payload[id])
                 : rankedIds.slice(0, topN);
 
             const allTimes = new Set();
@@ -610,15 +646,17 @@
 
             try {
                 const payload = await fetchTimeline(type, forceRefresh);
-                updateSelectOptions(payload, type);
+                const latestTime = getLatestSnapshotTime(payload);
+                const currentRankMap = buildCurrentRankMap(payload, latestTime);
+                updateSelectOptions(payload, type, currentRankMap);
 
                 if (!keepSelection) {
                     selectedByType[type] = getSelectedIds();
                 }
                 const selectedIds = selectedByType[type] || [];
-                const { labels, rawTimes, datasets, orderedIds } = buildSeries(payload, topN, selectedIds);
+                const { labels, rawTimes, datasets, orderedIds } = buildSeries(payload, topN, selectedIds, currentRankMap);
 
-                buildLegend(orderedIds, payload);
+                buildLegend(orderedIds, payload, currentRankMap);
                 updateMetrics(datasets, labels);
 
                 const viewport = preserveView ? captureViewport() : null;
