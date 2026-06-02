@@ -18,8 +18,16 @@ URLS = [
 CHECK_INTERVAL = 60
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
-STORAGE_DIR = os.path.join(PROJECT_ROOT, "data", "app_data_historical")
+
+if os.name == "nt":
+    logger.info("Running on Windows, using relative path for storage.")
+    PROJECT_ROOT = os.path.dirname(os.path.dirname(CURRENT_DIR))
+    STORAGE_DIR = os.path.join(PROJECT_ROOT, "data", "app_data_historical")
+else:
+    logger.info("Running on Linux, using fixed path for storage.")
+    PROJECT_ROOT = "/root/p_analysis/app_store"
+    STORAGE_DIR = os.path.join(PROJECT_ROOT, "app_data_historical")
+logger.info(f"Storage directory set to: {STORAGE_DIR}")
 
 def get_hash_path(url: str) -> str:
     """Generate a stable hash file path for a URL."""
@@ -60,6 +68,7 @@ async def fetch_and_monitor(url: str):
                 response_data = response.json()
                 results = response_data.get("feed", {}).get("results", [])
                 app_ids = [app.get("id") for app in results]
+                logger.info(f"App IDs for {url}: {app_ids}")
                 current_hash = await get_json_hash(json.dumps(app_ids).encode())
 
                 if current_hash != last_hash:
