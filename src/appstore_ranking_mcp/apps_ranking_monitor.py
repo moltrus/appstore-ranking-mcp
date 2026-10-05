@@ -3,9 +3,10 @@ import hashlib
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 import httpx
 from httpx import ReadTimeout
+import db as history_db
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
@@ -73,16 +74,30 @@ async def fetch_and_monitor(url: str):
 
                 if current_hash != last_hash:
                     app_type = "paid" if "top-paid" in url else "free"
-                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    # Second precision so captured_at matches the filename timestamp the migration script derives.
+                    now_utc = datetime.now(timezone.utc).replace(microsecond=0)
+                    timestamp = now_utc.strftime("%Y%m%d_%H%M%S")
                     filename = os.path.join(STORAGE_DIR, f"apps_{app_type}_{timestamp}.json")
 
+                    # Audit copy: kept on this server only, never synced (see mutagen config).
                     with open(filename, "w") as f:
                         json.dump(response_data, f, indent=4)
+
+                    feed_updated = response_data.get("feed", {}).get("updated")
+                    results = response_data.get("feed", {}).get("results", [])
+                    db_conn = history_db.get_connection()
+                    try:
+                        history_db.insert_snapshot(
+                            db_conn, app_type, now_utc.isoformat(), feed_updated,
+                            os.path.basename(filename), results,
+                        )
+                    finally:
+                        db_conn.close()
 
                     with open(hash_file, "w") as f:
                         f.write(current_hash)
 
-                    logger.info(f"Change detected. Saved to {filename}")
+                    logger.info(f"Change detected. Saved to {filename} and appstore_history.db")
                     last_hash = current_hash
                 else:
                     logger.info(f"No change detected. {url}")
@@ -100,6 +115,8 @@ async def fetch_and_monitor(url: str):
             await asyncio.sleep(CHECK_INTERVAL)
 
 if __name__ == "__main__":
+    history_db.init_db()
+
     async def main():
         await asyncio.gather(*(fetch_and_monitor(url) for url in URLS))
 

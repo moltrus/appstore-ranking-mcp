@@ -473,14 +473,10 @@
         let activeTab = "free";
         let availableFiles = { free: [], paid: [] };
 
-        function formatFileName(filename) {
-            if (!filename) return "Unknown";
-            const match = filename.match(/_(\d{4})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})\.json/);
-            if (match) {
-                const date = new Date(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`);
-                return date.toLocaleString();
-            }
-            return filename;
+        function formatSnapshotTime(isoTime) {
+            if (!isoTime) return "Unknown";
+            const date = new Date(isoTime);
+            return isNaN(date) ? isoTime : date.toLocaleString();
         }
 
         function escapeHtml(text) {
@@ -520,9 +516,9 @@
                 return;
             }
 
-            const sourceText = data.previous_file
-                ? `Comparing: <strong>${formatFileName(data.current_file)}</strong> vs <strong>${formatFileName(data.previous_file)}</strong>`
-                : `Showing: <strong>${formatFileName(data.current_file || "latest snapshot")}</strong>`;
+            const sourceText = data.previous_time
+                ? `Comparing: <strong>${formatSnapshotTime(data.current_time)}</strong> vs <strong>${formatSnapshotTime(data.previous_time)}</strong>`
+                : `Showing: <strong>${formatSnapshotTime(data.current_time) || "latest snapshot"}</strong>`;
 
             const cards = data.changes.map((item) => {
                 const positionText = item.previous_position
@@ -565,13 +561,18 @@
             document.getElementById("meta-down").textContent = String(down);
         }
 
-        function populateSelect(selectId, files, selectedValue) {
+        // selectedValue is the user's own pick ("" = Auto). Auto stays selected so
+        // later refreshes keep following the newest snapshot; resolvedTime just
+        // shows which snapshot Auto picked this time.
+        function populateSelect(selectId, snapshots, selectedValue, resolvedTime) {
             const select = document.getElementById(selectId);
-            const defaultOption = selectId.includes("previous") ? `<option value="">Auto (First file with changes)</option>` : `<option value="">Auto (Latest file)</option>`;
+            const autoLabel = selectId.includes("previous") ? "Previous snapshot" : "Latest snapshot";
+            const resolvedText = resolvedTime ? `: ${formatSnapshotTime(resolvedTime)}` : "";
+            const defaultOption = `<option value="">Auto (${autoLabel}${resolvedText})</option>`;
 
-            let options = files.map(file => {
-                const selected = file === selectedValue ? "selected" : "";
-                return `<option value="${file}" ${selected}>${formatFileName(file)}</option>`;
+            let options = snapshots.map(snap => {
+                const selected = String(snap.id) === String(selectedValue) ? "selected" : "";
+                return `<option value="${snap.id}" ${selected}>${formatSnapshotTime(snap.time)}</option>`;
             }).join("");
 
             select.innerHTML = defaultOption + options;
@@ -607,11 +608,10 @@
                 const data = await response.json();
                 latestPayload = data;
 
-                // Keep the selects displaying whatever was actually chosen by auto logic
-                populateSelect("free-current", availableFiles.free, data.free.current_file);
-                populateSelect("free-previous", availableFiles.free, data.free.previous_file);
-                populateSelect("paid-current", availableFiles.paid, data.paid.current_file);
-                populateSelect("paid-previous", availableFiles.paid, data.paid.previous_file);
+                populateSelect("free-current", availableFiles.free, freeCurrent, data.free.current_time);
+                populateSelect("free-previous", availableFiles.free, freePrevious, data.free.previous_time);
+                populateSelect("paid-current", availableFiles.paid, paidCurrent, data.paid.current_time);
+                populateSelect("paid-previous", availableFiles.paid, paidPrevious, data.paid.previous_time);
 
                 renderApps(data.free, "free");
                 renderApps(data.paid, "paid");

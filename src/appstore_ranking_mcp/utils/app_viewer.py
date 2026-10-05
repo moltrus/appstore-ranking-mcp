@@ -1,19 +1,45 @@
 import json
 import os
-from http.server import HTTPServer, SimpleHTTPRequestHandler
-from collections import defaultdict
-from email.utils import parsedate_to_datetime
+import sys
+import time
+import threading
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import urllib.parse
 import logging
 
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import db as history_db  # noqa: E402
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-STORAGE_DIR = os.path.join(PROJECT_ROOT, "data", "app_data_historical")
 PORT = 8000
+
+# Timeline responses are cached briefly since the chart UI polls every 10s
+# and the underlying data only changes when the monitor writes a new snapshot.
+_TIMELINE_CACHE_TTL_SECONDS = 8
+_timeline_cache = {}
+_timeline_cache_lock = threading.Lock()
+
+
+def get_cached_timeline(app_type: str) -> dict:
+    now = time.monotonic()
+    with _timeline_cache_lock:
+        cached = _timeline_cache.get(app_type)
+        if cached and (now - cached[0]) < _TIMELINE_CACHE_TTL_SECONDS:
+            return cached[1]
+
+    conn = history_db.get_connection()
+    try:
+        timeline = history_db.build_app_timeline(conn, app_type)
+    finally:
+        conn.close()
+
+    with _timeline_cache_lock:
+        _timeline_cache[app_type] = (now, timeline)
+    return timeline
+
 
 class AppViewerHandler(SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -32,24 +58,29 @@ class AppViewerHandler(SimpleHTTPRequestHandler):
                 self.wfile.write(f.read())
         elif self.path.startswith("/api/data"):
             query_components = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
-            free_current = query_components.get("free_current", [None])[0]
-            free_previous = query_components.get("free_previous", [None])[0]
-            paid_current = query_components.get("paid_current", [None])[0]
-            paid_previous = query_components.get("paid_previous", [None])[0]
+
+            def _int_or_none(key):
+                val = query_components.get(key, [None])[0]
+                try:
+                    return int(val) if val else None
+                except ValueError:
+                    return None
 
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
-            data = get_app_data(free_current, free_previous, paid_current, paid_previous)
+            data = get_app_data(
+                free_current=_int_or_none("free_current"),
+                free_previous=_int_or_none("free_previous"),
+                paid_current=_int_or_none("paid_current"),
+                paid_previous=_int_or_none("paid_previous"),
+            )
             self.wfile.write(json.dumps(data).encode())
         elif self.path == "/api/files":
             self.send_response(200)
             self.send_header("Content-type", "application/json")
             self.end_headers()
-            files = {
-                "free": sorted([f for f in os.listdir(STORAGE_DIR) if f.startswith("apps_free_")], reverse=True),
-                "paid": sorted([f for f in os.listdir(STORAGE_DIR) if f.startswith("apps_paid_")], reverse=True)
-            }
+            files = get_snapshot_list()
             self.wfile.write(json.dumps(files).encode())
         elif self.path.startswith("/api/timeline"):
             self.send_response(200)
@@ -61,7 +92,7 @@ class AppViewerHandler(SimpleHTTPRequestHandler):
             if "type=paid" in self.path:
                 app_type = "paid"
 
-            timeline_data = build_app_timeline(app_type)
+            timeline_data = get_cached_timeline(app_type)
             self.wfile.write(json.dumps(timeline_data).encode())
         else:
             self.send_response(404)
@@ -70,170 +101,116 @@ class AppViewerHandler(SimpleHTTPRequestHandler):
     def log_message(self, format, *args):
         logger.info(format % args)
 
+
+def get_snapshot_list():
+    """Returns {"free": [{"id", "time"}, ...], "paid": [...]}, newest first."""
+    conn = history_db.get_connection()
+    try:
+        return {
+            app_type: [
+                {"id": sid, "time": dt.isoformat()}
+                for sid, dt in reversed(history_db.get_all_snapshots(conn, app_type))
+            ]
+            for app_type in ("free", "paid")
+        }
+    finally:
+        conn.close()
+
+
 def get_app_data(free_current=None, free_previous=None, paid_current=None, paid_previous=None):
+    """
+    Returns rank data + changes for each app type. Callers may pin a specific
+    snapshot id for "current"/"previous"; otherwise defaults to the latest
+    snapshot vs. the one immediately before it.
+    """
     data = {"free": {}, "paid": {}}
+    requested = {
+        "free": (free_current, free_previous),
+        "paid": (paid_current, paid_previous),
+    }
 
-    for app_type in ["free", "paid"]:
-        files = sorted(
-            [f for f in os.listdir(STORAGE_DIR) if f.startswith(f"apps_{app_type}_")],
-            reverse=True
-        )
-        if not files:
-            continue
+    conn = history_db.get_connection()
+    try:
+        for app_type in ("free", "paid"):
+            snapshots = history_db.get_all_snapshots(conn, app_type)
+            if not snapshots:
+                continue
 
-        current_filename = free_current if app_type == "free" else paid_current
-        previous_filename = free_previous if app_type == "free" else paid_previous
+            by_id = {sid: dt for sid, dt in snapshots}
+            requested_current, requested_previous = requested[app_type]
 
-        # default to latest file if none provided or it doesn't exist
-        if not current_filename or current_filename not in files:
-            current_filename = files[0]
+            if requested_current in by_id:
+                current_id, current_dt = requested_current, by_id[requested_current]
+            else:
+                current_id, current_dt = snapshots[-1]
 
-        try:
-            with open(os.path.join(STORAGE_DIR, current_filename)) as f:
-                current = json.load(f)
-            current_results = current.get("feed", {}).get("results", [])
-        except:
-            continue
+            current_results = history_db.get_rankings(conn, current_id)
+            data[app_type]["current_id"] = current_id
+            data[app_type]["current_time"] = current_dt.isoformat()
 
-        data[app_type]["current_file"] = current_filename
+            previous_id = previous_dt = None
+            if requested_previous in by_id:
+                previous_id, previous_dt = requested_previous, by_id[requested_previous]
+            else:
+                idx = [sid for sid, _ in snapshots].index(current_id)
+                if idx > 0:
+                    previous_id, previous_dt = snapshots[idx - 1]
 
-        # logic to determine previous file
-        previous_results = []
-        best_previous_file = None
-
-        if previous_filename and previous_filename in files:
-            best_previous_file = previous_filename
-            try:
-                with open(os.path.join(STORAGE_DIR, previous_filename)) as f:
-                    prev_data = json.load(f)
-                previous_results = prev_data.get("feed", {}).get("results", [])
-            except:
-                best_previous_file = None
-                previous_results = []
-
-        # if previous file was not specified or loading failed, use the immediate previous file
-        if not best_previous_file:
-            start_index = files.index(current_filename) + 1 if current_filename in files else 1
-            if start_index < len(files):
-                best_previous_file = files[start_index]
-                try:
-                    with open(os.path.join(STORAGE_DIR, best_previous_file)) as f:
-                        prev_data = json.load(f)
-                    previous_results = prev_data.get("feed", {}).get("results", [])
-                except:
-                    best_previous_file = None
-                    previous_results = []
-
-        data[app_type]["previous_file"] = best_previous_file
-
-        if previous_results:
-            data[app_type]["changes"] = compare_rankings(current_results, previous_results)
-        else:
+            if previous_id is not None:
+                previous_results = history_db.get_rankings(conn, previous_id)
+                data[app_type]["previous_id"] = previous_id
+                data[app_type]["previous_time"] = previous_dt.isoformat()
+                data[app_type]["changes"] = compare_rankings(current_results, previous_results)
+            else:
+                data[app_type]["previous_id"] = None
+                data[app_type]["previous_time"] = None
                 data[app_type]["changes"] = [
-                    {"position": i + 1, "app": app, "change": 0, "previous_position": None}
-                    for i, app in enumerate(current_results)
+                    {"position": r["rank"], "app": _to_app_dict(r), "change": 0, "previous_position": None}
+                    for r in current_results
                 ]
+    finally:
+        conn.close()
 
     return data
 
+
+def _to_app_dict(r):
+    return {
+        "id": r["id"],
+        "name": r.get("name") or "Unknown",
+        "artistName": r.get("artistName") or "",
+        "artworkUrl100": r.get("artworkUrl100") or "",
+        # Not stored in the DB; the slug-less form resolves to the same listing.
+        "url": f"https://apps.apple.com/us/app/id{r['id']}",
+    }
+
+
 def compare_rankings(current, previous):
-    prev_map = {app["id"]: i for i, app in enumerate(previous)}
+    prev_map = {r["id"]: r["rank"] for r in previous}
     changes = []
 
-    for current_pos, app in enumerate(current):
-        app_id = app["id"]
-        prev_pos = prev_map.get(app_id)
-
-        if prev_pos is not None:
-            change = prev_pos - current_pos
-        else:
-            change = None
+    for r in current:
+        app_id = r["id"]
+        prev_rank = prev_map.get(app_id)
+        change = (prev_rank - r["rank"]) if prev_rank is not None else None
 
         changes.append({
-            "position": current_pos + 1,
-            "app": {
-                "id": app["id"],
-                "name": app.get("name", "Unknown"),
-                "artistName": app.get("artistName", ""),
-                "artworkUrl100": app.get("artworkUrl100", ""),
-                "url": app.get("url", "")
-            },
+            "position": r["rank"],
+            "app": _to_app_dict(r),
             "change": change,
-            "previous_position": prev_pos + 1 if prev_pos is not None else None
+            "previous_position": prev_rank
         })
 
     return changes
 
 
-def get_all_historical_files(app_type: str) -> list:
-    if not os.path.exists(STORAGE_DIR):
-        return []
-
-    files = [
-        os.path.join(STORAGE_DIR, f) for f in os.listdir(STORAGE_DIR)
-        if f.startswith(f"apps_{app_type}_") and f.endswith(".json")
-    ]
-
-    files_with_timestamps = []
-    for f in files:
-        try:
-            with open(f, "r") as json_file:
-                data = json.load(json_file)
-                updated_str = data.get("feed", {}).get("updated")
-                if updated_str:
-                    dt = parsedate_to_datetime(updated_str)
-                    files_with_timestamps.append((f, dt))
-        except Exception as e:
-            continue
-
-    files_with_timestamps.sort(key=lambda x: x[1])
-    return files_with_timestamps
-
-def build_app_timeline(app_type: str) -> dict:
-    files_with_timestamps = get_all_historical_files(app_type)
-    if not files_with_timestamps:
-        return {}
-
-    app_timelines = defaultdict(lambda: {
-        "appName": None,
-        "appId": None,
-        "artistName": None,
-        "artworkUrl": None,
-        "timeline": []
-    })
-
-    for filepath, dt in files_with_timestamps:
-        try:
-            with open(filepath, "r") as f:
-                data = json.load(f)
-
-            results = data.get("feed", {}).get("results", [])
-            timestamp = dt.isoformat()
-
-            for position, app in enumerate(results, start=1):
-                app_id = app["id"]
-                if app_id not in app_timelines:
-                    app_timelines[app_id]["appName"] = app.get("name")
-                    app_timelines[app_id]["appId"] = app_id
-                    app_timelines[app_id]["artistName"] = app.get("artistName")
-                    app_timelines[app_id]["artworkUrl"] = app.get("artworkUrl100")
-
-                timeline = app_timelines[app_id]["timeline"]
-                timeline.append({
-                    "time": timestamp,
-                    "rank": position
-                })
-        except:
-            continue
-    return dict(app_timelines)
-
 if __name__ == "__main__":
+    history_db.init_db()
     try:
         os.chdir(os.path.dirname(__file__))
-        server = HTTPServer(("localhost", PORT), AppViewerHandler)
+        server = ThreadingHTTPServer(("localhost", PORT), AppViewerHandler)
         logger.info(f"Starting server at http://localhost:{PORT}")
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Shutting down server...")
         server.server_close()
-
