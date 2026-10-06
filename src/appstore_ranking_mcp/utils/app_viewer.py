@@ -94,6 +94,20 @@ class AppViewerHandler(SimpleHTTPRequestHandler):
 
             timeline_data = get_cached_timeline(app_type)
             self.wfile.write(json.dumps(timeline_data).encode())
+        elif self.path.startswith("/api/dropped"):
+            query_components = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+            app_type = "paid" if query_components.get("type", ["free"])[0] == "paid" else "free"
+
+            conn = history_db.get_connection()
+            try:
+                dropped = history_db.get_dropped_apps(conn, app_type)
+            finally:
+                conn.close()
+
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"count": len(dropped), "droppedApps": dropped}).encode())
         else:
             self.send_response(404)
             self.end_headers()

@@ -521,6 +521,42 @@ def get_new_entries(target_date: str = None, lookback_days: int = 1, limit: int 
         "newEntries": new_entries
     })
 
+@mcp.tool()
+def get_dropped_apps(app_type: str = "free") -> Any:
+    """
+    List every app that has appeared in the rankings at some point but is not in the latest snapshot
+    (i.e. it dropped out of the chart). Works for any chart size, since it compares against whatever
+    the latest snapshot contains.
+    Note: All times are managed and displayed in UTC.
+    Args:
+        app_type: Either 'free' or 'paid'. Defaults to 'free'.
+    """
+    conn = history_db.get_connection()
+    try:
+        latest = history_db.get_latest_snapshot(conn, app_type)
+        if not latest:
+            return _format_response({"error": "No historical data available."})
+        dropped = history_db.get_dropped_apps(conn, app_type)
+    finally:
+        conn.close()
+
+    return _format_response({
+        "asOf": latest[1].isoformat(),
+        "count": len(dropped),
+        "droppedApps": [
+            {
+                "appId": d["id"],
+                "appName": d["name"],
+                "artistName": d["artistName"],
+                "lastRank": d["lastRank"],
+                "lastSeen": d["lastSeen"],
+                "firstSeen": d["firstSeen"],
+            }
+            for d in dropped
+        ],
+    })
+
+
 def main():
     mcp.run(transport="stdio")
 

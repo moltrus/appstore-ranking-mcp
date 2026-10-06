@@ -165,6 +165,50 @@ def get_rankings(conn, snapshot_id: int):
     ]
 
 
+def get_dropped_apps(conn, app_type: str) -> list:
+    """
+    Apps that appeared in any snapshot of `app_type` but are absent from the
+    latest snapshot. "Latest" is whatever the last poll contained, so this
+    holds for any chart size (top 50, top 100, ...), not just 50.
+
+    Returns [{id, name, artistName, lastRank, lastSeen, firstSeen}, ...],
+    most recently dropped first.
+    """
+    latest = get_latest_snapshot(conn, app_type)
+    if not latest:
+        return []
+
+    cur = conn.execute(
+        """
+        SELECT r.app_id, r.app_name, r.artist_name, r.rank AS last_rank,
+               g.last_seen, g.first_seen
+        FROM (
+            SELECT r2.app_id, MAX(s2.captured_at) AS last_seen, MIN(s2.captured_at) AS first_seen
+            FROM rankings r2
+            JOIN snapshots s2 ON s2.id = r2.snapshot_id
+            WHERE s2.app_type = ?
+              AND r2.app_id NOT IN (SELECT app_id FROM rankings WHERE snapshot_id = ?)
+            GROUP BY r2.app_id
+        ) g
+        JOIN snapshots s ON s.app_type = ? AND s.captured_at = g.last_seen
+        JOIN rankings r ON r.snapshot_id = s.id AND r.app_id = g.app_id
+        ORDER BY g.last_seen DESC, r.rank ASC
+        """,
+        (app_type, latest[0], app_type),
+    )
+    return [
+        {
+            "id": row["app_id"],
+            "name": row["app_name"],
+            "artistName": row["artist_name"],
+            "lastRank": row["last_rank"],
+            "lastSeen": row["last_seen"],
+            "firstSeen": row["first_seen"],
+        }
+        for row in cur.fetchall()
+    ]
+
+
 def build_app_timeline_window(conn, app_type: str, start_iso: str, end_iso: str) -> dict:
     """
     Same shape as build_app_timeline, but scoped to snapshots in
