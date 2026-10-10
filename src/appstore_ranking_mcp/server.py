@@ -1,12 +1,21 @@
+import importlib.metadata
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from typing import Any
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from dotenv import load_dotenv
 from toon import encode as toon_encode
 
 from . import db as history_db
+
+# Windows opens stdio with cp1252 by default, which raises OSError("Invalid
+# argument") on flush for non-ASCII output. MCP stdio requires UTF-8.
+if sys.platform == "win32":
+    sys.stdin.reconfigure(encoding="utf-8")
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
 
 load_dotenv()
 
@@ -55,8 +64,9 @@ def _format_response(data: Any) -> Any:
 # MCP server instance
 # ---------------------------------------------------------------------------
 
-mcp = FastMCP(
+mcp = MCPServer(
     "app-ranking",
+    version=importlib.metadata.version("appstore-ranking-mcp"),
     instructions=(
         "This server tracks historical App Store rankings for mobile applications."
         "It provides tools to view top apps live and analyze rank changes (timelines) over time."
